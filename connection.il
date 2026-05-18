@@ -20,3 +20,8 @@ procedure(countSignalsBetweenInsts(cellView inst1Name inst2Name)
     count
   )
 )
+
+
+; 현재 열린 schematic의 cellView 가져오기
+; cv = geGetWindowCellView()
+; countSignalsBetweenInsts(cv "U1" "U2")

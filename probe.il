@@ -1,9 +1,12 @@
 cv = geGetWindowCellView()
-
-; net의 실제 속성 이름 목록 확인
 net1 = car(cv~>nets)
 printf("net name: %s\n" net1~>name)
-printf("net attributes: %L\n" dbGetAttributeList(net1))
+
+; 방법 1
+printf("objType: %s\n" net1~>objType)
+
+; 방법 2 - SKILL의 일반적인 속성 조회
+inspect(net1)
 
 ; 현재 선택된 object 속성 확인
 sel = car(hiGetCurrentSelection(cv))

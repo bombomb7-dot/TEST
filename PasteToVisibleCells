@@ -15,78 +15,117 @@ Sub PasteToVisibleCells()
     Set dstRange = Range(dstAddr)
     On Error GoTo 0
 
-    ' ── 성능 설정 ──────────────────────────────
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
     Application.EnableEvents = False
 
-    ' ── 클립보드 → 임시 시트에 붙여넣기 ────────
-    Dim tempSheet As Worksheet
-    Set tempSheet = Worksheets.Add
-    tempSheet.Range("A1").PasteSpecial Paste:=xlPasteValues
+    ' ── 현재 시트의 사용 범위 오른쪽 빈 공간에 임시 붙여넣기 ──
+    ' (시트 전환 없음 → CutCopyMode 유지됨)
+    Dim ws As Worksheet
+    Set ws = ActiveSheet
 
-    Dim vals As Variant
-    vals = tempSheet.UsedRange.Value  ' 2D 배열로 한번에 읽기
+    Dim tempCol As Long, tempRow As Long
+    tempCol = ws.UsedRange.Column + ws.UsedRange.Columns.Count + 100
+    tempRow = 1
 
-    Dim totalRows As Long, totalCols As Long
-    totalRows = UBound(vals, 1)
-    totalCols = UBound(vals, 2)
+    ' 열이 범위 초과 시 행 방향으로 대피
+    If tempCol > ws.Columns.Count Then
+        tempCol = 1
+        tempRow = ws.UsedRange.Row + ws.UsedRange.Rows.Count + 100
+    End If
 
-    ' 1D flatten
-    Dim flatVals() As Variant
-    ReDim flatVals(1 To totalRows * totalCols)
-    Dim r As Long, c As Long, idx As Long
-    idx = 0
-    For r = 1 To totalRows
-        For c = 1 To totalCols
-            idx = idx + 1
-            flatVals(idx) = vals(r, c)
-        Next c
-    Next r
+    Dim tempCell As Range
+    Set tempCell = ws.Cells(tempRow, tempCol)
 
+    On Error GoTo PasteError
+    tempCell.PasteSpecial Paste:=xlPasteValues
+    On Error GoTo 0
+
+    ' PasteSpecial 직후 Selection = 붙여넣어진 범위
+    Dim pastedRange As Range
+    Set pastedRange = Selection
+
+    ' ── 배열로 읽기 ──
     Dim totalCells As Long
-    totalCells = idx
+    Dim flatVals() As Variant
 
-    ' 임시 시트 삭제
-    Application.DisplayAlerts = False
-    tempSheet.Visible = xlSheetVisible
-    tempSheet.Delete
-    Application.DisplayAlerts = True
+    If pastedRange.Cells.Count = 1 Then
+        totalCells = 1
+        ReDim flatVals(1 To 1)
+        flatVals(1) = pastedRange.Value
+    Else
+        Dim vals As Variant
+        vals = pastedRange.Value
+        Dim tR As Long, tC As Long
+        tR = UBound(vals, 1)
+        tC = UBound(vals, 2)
+        totalCells = tR * tC
+        ReDim flatVals(1 To totalCells)
+        Dim r As Long, c As Long, i As Long
+        i = 0
+        For r = 1 To tR
+            For c = 1 To tC
+                i = i + 1
+                flatVals(i) = vals(r, c)
+            Next c
+        Next r
+    End If
 
-    ' ── 보이는 셀만 가져오기 ────────────────────
+    ' 임시 영역 내용만 삭제 (셀 이동 없음)
+    pastedRange.ClearContents
+
+    ' ── 보이는 셀 가져오기 ──
     Dim visibleRange As Range
     On Error GoTo NoVisible
     Set visibleRange = dstRange.SpecialCells(xlCellTypeVisible)
     On Error GoTo 0
 
-    ' ── Area별 배열 일괄 쓰기 (핵심 속도 개선) ──
+    ' ── Area별 배열 일괄 쓰기 ──
+    Dim idx As Long
     idx = 0
+    Dim srcDone As Boolean
+    srcDone = False
     Dim area As Range
+
     For Each area In visibleRange.Areas
+        If srcDone Then Exit For
+
         Dim aRows As Long, aCols As Long
         aRows = area.Rows.Count
         aCols = area.Columns.Count
 
-        Dim subArr() As Variant
-        ReDim subArr(1 To aRows, 1 To aCols)
-
-        Dim ri As Long, ci As Long
-        For ri = 1 To aRows
-            For ci = 1 To aCols
+        If idx + (aRows * aCols) <= totalCells Then
+            ' 전체 Area 일괄 쓰기 (빠름)
+            Dim subArr() As Variant
+            ReDim subArr(1 To aRows, 1 To aCols)
+            Dim ri As Long, ci As Long
+            For ri = 1 To aRows
+                For ci = 1 To aCols
+                    idx = idx + 1
+                    subArr(ri, ci) = flatVals(idx)
+                Next ci
+            Next ri
+            area.Value = subArr
+        Else
+            ' 마지막 Area만 셀 단위 쓰기 (원본 소진 시점 정확히 처리)
+            Dim cell As Range
+            For Each cell In area.Cells
+                If idx >= totalCells Then
+                    srcDone = True
+                    Exit For
+                End If
                 idx = idx + 1
-                If idx > totalCells Then GoTo Overflow
-                subArr(ri, ci) = flatVals(idx)
-            Next ci
-        Next ri
-
-        area.Value = subArr  ' 영역 전체를 한 번에 씀
+                cell.Value = flatVals(idx)
+            Next cell
+            srcDone = True
+        End If
     Next area
 
     MsgBox idx & "개 셀을 붙여넣었습니다.", vbInformation
     GoTo Done
 
-Overflow:
-    MsgBox "원본 데이터 " & totalCells & "개를 모두 붙여넣었습니다.", vbInformation
+PasteError:
+    MsgBox "붙여넣기 실패. 다시 Ctrl+C 후 즉시 실행해 주세요.", vbCritical
     GoTo Done
 
 NoVisible:
